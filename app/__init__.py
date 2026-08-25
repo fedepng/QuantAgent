@@ -1,0 +1,2 @@
+"""QuantAgent application package."""
+

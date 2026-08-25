@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuantAgent - 量化研究智能体</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23071018'/%3E%3Cpath d='M13 43 25 31l9 8 17-19' fill='none' stroke='%237be0b7' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">REPRODUCIBLE QUANT RESEARCH</p>
+      <h1>QuantAgent</h1>
+      <p class="subtitle">把自然语言研究任务拆成可校验的行情、因子、回测、风险与知识检索工具。</p>
+    </div>
+    <div class="status" id="health">正在连接服务...</div>
+  </header>
+
+  <main>
+    <section class="hero-grid">
+      <article class="panel agent-panel">
+        <div class="panel-title">
+          <div><span>01</span><h2>研究任务</h2></div>
+          <button id="run-agent">运行 Agent</button>
+        </div>
+        <textarea id="agent-query" rows="5">请回测20日动量因子，选择前2只资产，每5日调仓，并说明最大回撤</textarea>
+        <div class="quick-actions">
+          <button data-query="分析20日动量因子的当前排名">因子排名</button>
+          <button data-query="查看 ALPHA 最近30日行情">行情查询</button>
+          <button data-query="根据知识库说明如何避免回测未来函数">研报问答</button>
+        </div>
+        <div id="agent-result" class="result muted">运行后将在这里展示规划、工具参数与确定性结果。</div>
+      </article>
+
+      <article class="panel metric-panel">
+        <div class="panel-title"><div><span>02</span><h2>风险概览</h2></div></div>
+        <div class="metrics" id="metrics">
+          <div><small>累计收益</small><strong>--</strong></div>
+          <div><small>年化收益</small><strong>--</strong></div>
+          <div><small>夏普比率</small><strong>--</strong></div>
+          <div><small>最大回撤</small><strong>--</strong></div>
+        </div>
+        <canvas id="equity-chart" width="760" height="300"></canvas>
+      </article>
+    </section>
+
+    <section class="lower-grid">
+      <article class="panel">
+        <div class="panel-title"><div><span>03</span><h2>策略回测</h2></div><button id="run-backtest">执行回测</button></div>
+        <div class="form-grid">
+          <label>因子<select id="factor"><option value="momentum">动量</option><option value="reversal">反转</option><option value="volatility">低波动</option><option value="sma_ratio">均线偏离</option><option value="volume_zscore">成交量 Z-Score</option></select></label>
+          <label>回看期<input id="lookback" type="number" value="20" min="5"></label>
+          <label>持仓数量<input id="top-k" type="number" value="2" min="1"></label>
+          <label>调仓间隔<input id="rebalance" type="number" value="5" min="1"></label>
+          <label>交易成本(bps)<input id="cost" type="number" value="5" min="0" step="0.5"></label>
+        </div>
+        <pre id="backtest-detail">等待回测...</pre>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title"><div><span>04</span><h2>研报知识库</h2></div><button id="upload-document">添加文档</button></div>
+        <input type="file" id="document-file" accept=".txt,.md" hidden>
+        <div class="search-row"><input id="rag-query" value="如何避免未来函数？"><button id="search-rag">检索</button></div>
+        <div id="rag-result" class="result muted">内置研究说明已完成向量化，可直接检索。</div>
+        <div id="documents" class="document-list"></div>
+      </article>
+    </section>
+  </main>
+
+  <footer>QuantAgent · FastAPI / Pandas / NumPy / SQLite / FAISS / RAG / Tool Calling</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
