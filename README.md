@@ -23,10 +23,22 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn app.main:app --reload
 ```
 
-也可以直接运行：
+也可以直接运行（Windows 推荐使用批处理文件，不受 PowerShell 执行策略影响）：
+
+```powershell
+.\run.bat
+```
+
+或运行 PowerShell 脚本：
 
 ```powershell
 .\run.ps1
+```
+
+如果系统拦截 PowerShell 脚本，可以仅为当前进程临时放行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
 打开：
@@ -81,4 +93,3 @@ docs/                   架构和面试追问说明
 ## License
 
 MIT
-
