@@ -1,37 +1,52 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import date
+
+from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+
+FactorName = Literal["momentum", "reversal", "volatility", "sma_ratio", "volume_zscore"]
+
+
+class MarketSnapshotArguments(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    limit: int = Field(default=120, ge=1, le=5000)
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
 
 
 class FactorRequest(BaseModel):
-    factor: str = "momentum"
+    factor: FactorName = "momentum"
     lookback: int = Field(default=20, ge=5, le=252)
+    symbols: list[str] | None = Field(default=None, max_length=5000)
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 class BacktestRequest(BaseModel):
-    factor: str = "momentum"
+    factor: FactorName = "momentum"
     lookback: int = Field(default=20, ge=5, le=252)
-    top_k: int = Field(default=2, ge=1, le=20)
+    top_k: int = Field(default=2, ge=1, le=5000)
     rebalance_days: int = Field(default=5, ge=1, le=63)
     transaction_cost_bps: float = Field(default=5.0, ge=0, le=100)
-
-
-class DocumentRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    content: str = Field(min_length=1)
-    source: str = Field(default="manual", max_length=200)
-
-
-class RagSearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=1000)
-    top_k: int = Field(default=4, ge=1, le=20)
+    symbols: list[str] | None = Field(default=None, max_length=5000)
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 class AgentRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
-    factor: str | None = None
+    factor: FactorName | None = None
     lookback: int | None = Field(default=None, ge=5, le=252)
-    top_k: int | None = Field(default=None, ge=1, le=20)
+    top_k: int | None = Field(default=None, ge=1, le=5000)
     rebalance_days: int | None = Field(default=None, ge=1, le=63)
     transaction_cost_bps: float | None = Field(default=None, ge=0, le=100)
-
+    symbols: list[str] | None = Field(default=None, max_length=5000)
+    start_date: date | None = None
+    end_date: date | None = None

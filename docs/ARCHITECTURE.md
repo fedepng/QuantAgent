@@ -8,21 +8,47 @@ Browser / API client
         v
 FastAPI validation layer
         |
+        +------> DatasetService --> Raw CSV + Parquet
+        |               |
+        |               +--------> SQLite dataset metadata
+        |
         v
-ResearchAgent planner -----> SQLite task audit
+DeepSeek Responses Agent --> SQLite task audit
         |
         v
 ToolRegistry
-  |          |            |              |
-Market    Factor      Backtest/Risk     RAG
-data      engine       engine           service
-  |          |            |              |
-  +----------+------------+-------+------+
-                                 |
-                         SQLite + FAISS
+  |          |            |
+Market    Factor      Backtest/Risk
+data      engine       engine
+  |          |            |
+  +----------+------------+
+             |
+     SQLite + Parquet
 ```
 
-The agent never calculates financial numbers from prose. It creates a typed tool plan and delegates every numeric result to deterministic Pandas/NumPy code. Tool inputs and results are stored with the task so that a run can be inspected later.
+DeepSeek-V4-Flash interprets natural language and emits strict custom function calls. Every call is validated again with Pydantic and dispatched through an allow-listed `ToolRegistry`. The model never calculates financial numbers from prose: market data, factors, backtest series, and risk metrics come from deterministic Pandas/NumPy code.
+
+## Agent loop
+
+1. Send the user request, developer instructions, and strict function schemas to the Responses API.
+2. Validate each returned function name and JSON argument object.
+3. Execute the corresponding local tool and persist its full result.
+4. Return a compact `function_call_output` using the original `call_id`.
+5. Repeat until the model returns final text or the configured tool-round limit is reached.
+
+The DeepSeek Responses API is stateless. Its credentials are read from `.env` and never stored in SQLite. The current dataset and dynamic symbol list are included in the research context.
+
+## Dataset lifecycle
+
+1. Receive a CSV upload with a 50 MB limit.
+2. Validate required columns, numeric values, uniqueness, missing values, volume and OHLC relationships.
+3. Calculate a SHA-256 hash and reject duplicate files.
+4. Save the immutable original CSV and normalized Parquet under a generated directory.
+5. Commit dataset metadata and quality statistics to SQLite.
+6. Activate the dataset and replace the in-memory market frame.
+7. Restore the active dataset from SQLite and Parquet after restart.
+
+Backtest provenance includes the dataset id and hash, actual symbol list, effective date range and application version. API responses never expose the internal storage path.
 
 ## Backtest timing
 
@@ -33,13 +59,3 @@ The agent never calculates financial numbers from prose. It creates a typed tool
 5. Deduct `turnover * transaction_cost_bps / 10000`.
 
 This ordering prevents the strategy from using the current closing price before earning the current close-to-close return.
-
-## RAG pipeline
-
-1. Normalize and split documents into overlapping chunks.
-2. Encode English tokens and Chinese character n-grams into normalized vectors.
-3. Use FAISS `IndexFlatIP` for cosine-equivalent retrieval. If FAISS is unavailable, use a NumPy matrix product with identical scoring semantics.
-4. Return document id, chunk id, rank, similarity score, and excerpt for every citation.
-
-The default hashing embedding is intentionally local and deterministic. A neural embedding provider can replace it behind the same `encode()` interface.
-

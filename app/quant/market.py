@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 import pandas as pd
@@ -48,8 +50,8 @@ def generate_demo_market(seed: int, periods: int = 520) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True).sort_values(["date", "symbol"])
 
 
-def load_market_csv(path: Path) -> pd.DataFrame:
-    frame = pd.read_csv(path)
+def normalize_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
     missing = REQUIRED_COLUMNS - set(frame.columns.str.lower())
     if missing:
         raise ValueError(f"CSV missing columns: {sorted(missing)}")
@@ -58,20 +60,69 @@ def load_market_csv(path: Path) -> pd.DataFrame:
     frame["symbol"] = frame["symbol"].astype(str).str.upper()
     numeric = ["open", "high", "low", "close", "volume"]
     frame[numeric] = frame[numeric].apply(pd.to_numeric, errors="raise")
+    if frame[list(REQUIRED_COLUMNS)].isna().any().any():
+        raise ValueError("CSV contains missing required values")
     if frame.duplicated(["date", "symbol"]).any():
         raise ValueError("CSV contains duplicate date/symbol rows")
     if (frame[["open", "high", "low", "close"]] <= 0).any().any():
         raise ValueError("Prices must be positive")
+    if (frame["volume"] < 0).any():
+        raise ValueError("Volume cannot be negative")
+    invalid_range = (
+        (frame["low"] > frame[["open", "close"]].min(axis=1))
+        | (frame["high"] < frame[["open", "close"]].max(axis=1))
+        | (frame["low"] > frame["high"])
+    )
+    if invalid_range.any():
+        rows = (invalid_range[invalid_range].index + 2).tolist()[:10]
+        raise ValueError(f"Invalid OHLC relationship at CSV rows: {rows}")
     return frame.sort_values(["date", "symbol"]).reset_index(drop=True)
+
+
+def load_market_csv(path: Path | BinaryIO | BytesIO) -> pd.DataFrame:
+    return normalize_market_frame(pd.read_csv(path))
+
+
+def market_quality(frame: pd.DataFrame) -> dict[str, object]:
+    counts = frame.groupby("symbol")["date"].count()
+    dates = frame["date"].drop_duplicates().sort_values()
+    expected = len(dates)
+    missing_by_symbol = {
+        str(symbol): int(expected - count)
+        for symbol, count in counts.items()
+        if count < expected
+    }
+    return {
+        "duplicate_rows": 0,
+        "missing_values": int(frame[list(REQUIRED_COLUMNS)].isna().sum().sum()),
+        "trading_days": expected,
+        "missing_trading_days_by_symbol": missing_by_symbol,
+    }
 
 
 class MarketDataService:
     def __init__(self, seed: int) -> None:
         self._frame = generate_demo_market(seed)
+        self._dataset = {
+            "id": None,
+            "name": "内置模拟数据",
+            "market": "DEMO",
+            "adjustment": "none",
+            "content_hash": f"demo-{seed}",
+            "is_demo": True,
+        }
 
     @property
     def frame(self) -> pd.DataFrame:
         return self._frame.copy()
+
+    @property
+    def dataset(self) -> dict[str, object]:
+        return dict(self._dataset)
+
+    def replace(self, frame: pd.DataFrame, dataset: dict[str, object]) -> None:
+        self._frame = normalize_market_frame(frame)
+        self._dataset = {**dataset, "is_demo": False}
 
     def replace_from_csv(self, path: Path) -> None:
         self._frame = load_market_csv(path)
@@ -79,11 +130,21 @@ class MarketDataService:
     def symbols(self) -> list[str]:
         return sorted(self._frame["symbol"].unique().tolist())
 
-    def prices(self, symbol: str, limit: int = 120) -> list[dict[str, object]]:
+    def prices(
+        self,
+        symbol: str,
+        limit: int = 120,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, object]]:
         symbol = symbol.upper()
-        frame = self._frame[self._frame["symbol"] == symbol].tail(limit).copy()
+        frame = self._frame[self._frame["symbol"] == symbol].copy()
+        if start_date:
+            frame = frame[frame["date"] >= pd.Timestamp(start_date)]
+        if end_date:
+            frame = frame[frame["date"] <= pd.Timestamp(end_date)]
+        frame = frame.tail(limit)
         if frame.empty:
             raise KeyError(f"Unknown symbol: {symbol}")
         frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
         return frame.to_dict(orient="records")
-

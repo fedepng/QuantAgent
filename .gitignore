@@ -8,8 +8,9 @@ htmlcov/
 data/*.db
 data/*.db-*
 data/uploads/
+data/datasets/
+data/*.log
 dist/
 build/
 .idea/
 .vscode/
-

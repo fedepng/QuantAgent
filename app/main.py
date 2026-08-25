@@ -4,49 +4,41 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.agent import ResearchAgent
+from app.agent import AgentExecutionError, AgentUnavailableError, DeepSeekResearchAgent
 from app.config import ROOT_DIR, Settings, load_settings
 from app.db import Database
+from app.datasets import DatasetService
 from app.quant.backtest import BacktestEngine, BacktestParameters
 from app.quant.factors import FACTOR_NAMES, FactorEngine
 from app.quant.market import MarketDataService
-from app.rag.service import RagService
-from app.schemas import AgentRequest, BacktestRequest, DocumentRequest, FactorRequest, RagSearchRequest
+from app.schemas import AgentRequest, BacktestRequest, FactorRequest
 from app.tools import ToolRegistry
 
 
-SEED_RESEARCH_NOTE = """
-动量因子研究说明
-
-动量策略按照过去一段时间的累计收益对资产排序，并在固定调仓日持有排名靠前的资产。
-为避免未来函数，交易日 t 的持仓只能使用 t-1 日收盘后已经得到的因子值。本项目对因子矩阵整体滞后一日，
-再计算当日持仓收益。回测同时按照权重变化绝对值计算换手率，并扣除换手率乘以单边交易成本。
-
-风险指标说明
-
-年化收益率按净值期末值和有效交易日数量复合年化；年化波动率使用日收益标准差乘以 sqrt(252)；
-夏普比率使用年化收益率除以年化波动率。最大回撤通过净值除以历史累计最高净值再减一计算。
-VaR 采用日收益 5% 分位数，CVaR 采用不高于该分位数的尾部收益均值。
-"""
-
-
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, deepseek_client: Any | None = None) -> FastAPI:
     settings = settings or load_settings()
     database = Database(settings.database_path)
     database.initialize()
     market = MarketDataService(settings.random_seed)
+    dataset_root = settings.dataset_path or (settings.database_path.parent / "datasets")
+    datasets = DatasetService(database, market, dataset_root)
     factors = FactorEngine()
     backtests = BacktestEngine(factors)
-    rag = RagService(database, settings.embedding_dim)
-    if not rag.list_documents():
-        rag.add_document("内置策略研究说明", SEED_RESEARCH_NOTE, "built-in")
-    tools = ToolRegistry(market, factors, backtests, rag, database)
-    agent = ResearchAgent(tools, database)
+    tools = ToolRegistry(market, factors, backtests, database)
+    agent = DeepSeekResearchAgent(
+        tools,
+        database,
+        settings.deepseek_api_key,
+        settings.deepseek_model,
+        settings.deepseek_base_url,
+        settings.deepseek_max_tool_rounds,
+        deepseek_client,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -54,8 +46,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="QuantAgent",
-        description="Reproducible quantitative research agent with RAG and deterministic tools.",
-        version="1.0.0",
+        description="DeepSeek tool-calling quantitative research agent with deterministic tools.",
+        version="2.0.0",
         lifespan=lifespan,
     )
     app.add_middleware(
@@ -66,9 +58,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.database = database
     app.state.market = market
+    app.state.datasets = datasets
     app.state.factors = factors
     app.state.backtests = backtests
-    app.state.rag = rag
     app.state.tools = tools
     app.state.agent = agent
 
@@ -78,8 +70,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "status": "ok",
             "version": app.version,
             "symbols": len(market.symbols()),
-            "documents": len(rag.list_documents()),
-            "vector_backend": rag.index.backend,
+            "dataset": market.dataset,
+            "agent": {
+                "provider": "deepseek",
+                "model": agent.model,
+                "configured": agent.configured,
+            },
         }
 
     @app.get("/api/tools")
@@ -87,27 +83,85 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return tools.schemas
 
     @app.get("/api/market/symbols")
-    def symbols() -> list[str]:
-        return market.symbols()
+    def symbols(dataset_id: int | None = None) -> list[str]:
+        try:
+            return datasets.symbols(dataset_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/api/datasets/import", status_code=201)
+    async def import_dataset(
+        file: UploadFile = File(...),
+        name: str = Form(""),
+        market_name: str = Form("CN"),
+        adjustment: str = Form("qfq"),
+        source: str = Form("upload"),
+        activate: bool = Form(True),
+    ) -> dict[str, object]:
+        try:
+            content = await file.read()
+            return datasets.import_csv(
+                content,
+                file.filename or "market.csv",
+                name,
+                market_name,
+                adjustment,
+                source,
+                activate,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/datasets")
+    def list_datasets() -> list[dict[str, object]]:
+        return datasets.list()
+
+    @app.get("/api/datasets/{dataset_id}")
+    def get_dataset(dataset_id: int) -> dict[str, object]:
+        dataset = datasets.get(dataset_id)
+        if dataset is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        return dataset
+
+    @app.post("/api/datasets/{dataset_id}/activate")
+    def activate_dataset(dataset_id: int) -> dict[str, object]:
+        try:
+            return datasets.activate(dataset_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/api/datasets/{dataset_id}/symbols")
+    def dataset_symbols(dataset_id: int) -> list[str]:
+        try:
+            return datasets.symbols(dataset_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/api/market/prices")
-    def prices(symbol: str = "ALPHA", limit: int = Query(120, ge=1, le=520)) -> dict[str, Any]:
+    def prices(
+        symbol: str = "ALPHA",
+        limit: int = Query(120, ge=1, le=5000),
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
         try:
-            return tools.market_snapshot(symbol, limit)
+            return tools.market_snapshot(symbol, limit, start_date, end_date)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post("/api/factors/analyze")
     def analyze_factor(request: FactorRequest) -> dict[str, Any]:
         try:
-            return tools.factor_snapshot(request.factor, request.lookback)
+            return tools.factor_snapshot(**request.model_dump(mode="json"))
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post("/api/backtests")
     def run_backtest(request: BacktestRequest) -> dict[str, Any]:
         try:
-            return tools.run_backtest(**request.model_dump())
+            return tools.run_backtest(**request.model_dump(mode="json"))
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -118,41 +172,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Backtest not found")
         return result
 
-    @app.get("/api/documents")
-    def documents() -> list[dict[str, object]]:
-        return rag.list_documents()
-
-    @app.post("/api/documents", status_code=201)
-    def add_document(request: DocumentRequest) -> dict[str, object]:
-        try:
-            return rag.add_document(request.title, request.content, request.source)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-
-    @app.delete("/api/documents/{document_id}")
-    def delete_document(document_id: int) -> dict[str, bool]:
-        if not rag.delete_document(document_id):
-            raise HTTPException(status_code=404, detail="Document not found")
-        return {"deleted": True}
-
-    @app.post("/api/rag/search")
-    def search_rag(request: RagSearchRequest) -> dict[str, object]:
-        try:
-            return rag.search(request.query, request.top_k)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+    @app.get("/api/backtests")
+    def list_backtests(limit: int = Query(20, ge=1, le=100)) -> list[dict[str, Any]]:
+        return database.list_backtests(limit)
 
     @app.post("/api/agent/run")
     def run_agent(request: AgentRequest) -> dict[str, Any]:
         try:
-            values = request.model_dump(exclude={"query"})
+            values = request.model_dump(exclude={"query"}, mode="json")
             return agent.run(request.query, **values)
+        except AgentUnavailableError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except AgentExecutionError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
         except (ValueError, KeyError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.get("/api/tasks")
     def tasks(limit: int = Query(20, ge=1, le=100)) -> list[dict[str, Any]]:
         return database.list_tasks(limit)
+
+    @app.get("/api/tasks/{task_id}")
+    def get_task(task_id: int) -> dict[str, Any]:
+        task = database.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return task
 
     static_dir = ROOT_DIR / "app" / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -165,4 +210,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-

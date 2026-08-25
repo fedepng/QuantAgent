@@ -18,6 +18,22 @@
   </header>
 
   <main>
+    <section class="panel data-panel">
+      <div class="panel-title">
+        <div><span>00</span><h2>行情数据</h2></div>
+        <button id="import-dataset">导入并启用</button>
+      </div>
+      <div class="dataset-grid">
+        <label>CSV 文件<input type="file" id="dataset-file" accept=".csv"></label>
+        <label>数据集名称<input id="dataset-name" placeholder="例如：沪深300日线"></label>
+        <label>市场<input id="dataset-market" value="CN"></label>
+        <label>复权方式<select id="dataset-adjustment"><option value="qfq">前复权</option><option value="hfq">后复权</option><option value="none">不复权</option></select></label>
+        <label>来源<input id="dataset-source" value="upload"></label>
+      </div>
+      <div id="dataset-status" class="result muted">当前使用内置模拟数据，可上传标准 OHLCV CSV 切换为真实数据。</div>
+      <div id="dataset-list" class="dataset-list"></div>
+    </section>
+
     <section class="hero-grid">
       <article class="panel agent-panel">
         <div class="panel-title">
@@ -28,9 +44,8 @@
         <div class="quick-actions">
           <button data-query="分析20日动量因子的当前排名">因子排名</button>
           <button data-query="查看 ALPHA 最近30日行情">行情查询</button>
-          <button data-query="根据知识库说明如何避免回测未来函数">研报问答</button>
         </div>
-        <div id="agent-result" class="result muted">运行后将在这里展示规划、工具参数与确定性结果。</div>
+        <div id="agent-result" class="result muted">DeepSeek-V4-Flash Agent 将理解任务、提取参数并按需调用量化工具。</div>
       </article>
 
       <article class="panel metric-panel">
@@ -42,33 +57,42 @@
           <div><small>最大回撤</small><strong>--</strong></div>
         </div>
         <canvas id="equity-chart" width="760" height="300"></canvas>
+        <canvas id="drawdown-chart" width="760" height="180"></canvas>
       </article>
     </section>
 
     <section class="lower-grid">
       <article class="panel">
-        <div class="panel-title"><div><span>03</span><h2>策略回测</h2></div><button id="run-backtest">执行回测</button></div>
+        <div class="panel-title"><div><span>03</span><h2>因子分析</h2></div><button id="run-factor">计算排名</button></div>
+        <div class="form-grid factor-form">
+          <label>因子<select id="factor-analysis"><option value="momentum">动量</option><option value="reversal">反转</option><option value="volatility">低波动</option><option value="sma_ratio">均线偏离</option><option value="volume_zscore">成交量 Z-Score</option></select></label>
+          <label>回看期<input id="factor-lookback" type="number" value="20" min="5"></label>
+          <label>股票代码<input id="factor-symbols" placeholder="留空表示全部，逗号分隔"></label>
+          <label>开始日期<input id="factor-start" type="date"></label>
+          <label>结束日期<input id="factor-end" type="date"></label>
+        </div>
+        <div id="factor-result" class="result muted">等待因子分析...</div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title"><div><span>04</span><h2>策略回测</h2></div><button id="run-backtest">执行回测</button></div>
         <div class="form-grid">
           <label>因子<select id="factor"><option value="momentum">动量</option><option value="reversal">反转</option><option value="volatility">低波动</option><option value="sma_ratio">均线偏离</option><option value="volume_zscore">成交量 Z-Score</option></select></label>
           <label>回看期<input id="lookback" type="number" value="20" min="5"></label>
           <label>持仓数量<input id="top-k" type="number" value="2" min="1"></label>
           <label>调仓间隔<input id="rebalance" type="number" value="5" min="1"></label>
           <label>交易成本(bps)<input id="cost" type="number" value="5" min="0" step="0.5"></label>
+          <label>股票代码<input id="backtest-symbols" placeholder="留空表示全部，逗号分隔"></label>
+          <label>开始日期<input id="backtest-start" type="date"></label>
+          <label>结束日期<input id="backtest-end" type="date"></label>
         </div>
         <pre id="backtest-detail">等待回测...</pre>
       </article>
 
-      <article class="panel">
-        <div class="panel-title"><div><span>04</span><h2>研报知识库</h2></div><button id="upload-document">添加文档</button></div>
-        <input type="file" id="document-file" accept=".txt,.md" hidden>
-        <div class="search-row"><input id="rag-query" value="如何避免未来函数？"><button id="search-rag">检索</button></div>
-        <div id="rag-result" class="result muted">内置研究说明已完成向量化，可直接检索。</div>
-        <div id="documents" class="document-list"></div>
-      </article>
     </section>
   </main>
 
-  <footer>QuantAgent · FastAPI / Pandas / NumPy / SQLite / FAISS / RAG / Tool Calling</footer>
+  <footer>QuantAgent · DeepSeek Responses API / FastAPI / Pandas / NumPy / Parquet / SQLite</footer>
   <script src="/static/app.js"></script>
 </body>
 </html>
