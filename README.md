@@ -18,39 +18,59 @@ QuantAgent 是一个可复现的量化研究工作台，支持通过自然语言
 
 ## 快速启动
 
-需要 Python 3.11 或更高版本。
+环境要求：Windows、Git、Python 3.11 或更高版本。
 
-复制环境变量示例：
+### 第一次运行
+
+打开 PowerShell，下载项目：
+
+```powershell
+cd $HOME\Desktop
+git clone https://github.com/fedepng/QuantAgent.git
+cd QuantAgent
+```
+
+创建配置文件并打开：
 
 ```powershell
 Copy-Item .env.example .env
+notepad .env
 ```
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\python -m uvicorn app.main:app --reload
+至少填写自己的 API Key：
+
+```env
+LLM_API_KEY=你的API密钥
 ```
 
-也可以直接运行（Windows 推荐使用批处理文件，不受 PowerShell 执行策略影响）：
+保存 `.env` 后启动：
 
 ```powershell
 .\run.bat
 ```
 
-或运行 PowerShell 脚本：
+`run.bat` 会在首次运行时自动创建 `.venv`、安装依赖并启动服务。浏览器访问 <http://127.0.0.1:8000>。
+
+### 手动启动
+
+不使用启动脚本时，依次执行：
 
 ```powershell
-.\run.ps1
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-如果系统拦截 PowerShell 脚本，可以仅为当前进程临时放行：
+### 后续启动
+
+以后进入项目目录运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run.ps1
+cd $HOME\Desktop\QuantAgent
+.\run.bat
 ```
 
-打开：
+常用地址：
 
 - 研究面板：<http://127.0.0.1:8000>
 - Swagger：<http://127.0.0.1:8000/docs>
