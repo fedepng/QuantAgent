@@ -1,6 +1,6 @@
 # QuantAgent 量化研究智能体
 
-QuantAgent 2.0 是一个基于 DeepSeek Responses API Function Calling 的可复现量化研究工作台。DeepSeek-V4-Flash Agent 负责理解自然语言、提取参数和多轮工具规划，行情、因子、回测与风险数值由 Pandas/NumPy 确定性计算。真实行情标准化为 Parquet，数据版本、研究参数、工具轨迹和回测结果保存到 SQLite。
+QuantAgent 是一个基于 DeepSeek Responses API Function Calling 的可复现量化研究工作台。DeepSeek-V4-Flash Agent 负责理解自然语言、提取参数和多轮工具规划，行情、因子、回测与风险数值由 Pandas/NumPy 确定性计算。真实行情标准化为 Parquet，数据版本、研究参数、工具轨迹和回测结果保存到 SQLite。
 
 ## 功能
 
