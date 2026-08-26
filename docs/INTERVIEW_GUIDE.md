@@ -8,9 +8,9 @@ An LLM is useful for interpreting a request, but it should not invent market pri
 
 Every CSV import is validated, hashed with SHA-256 and stored as an immutable original file plus a normalized Parquet file. SQLite stores its date range, adjustment mode, symbol and row counts, quality report and active state. Every backtest references the dataset id and hash together with its actual symbols and date range, so the same research run can be reproduced after restart.
 
-## How does the DeepSeek Agent call tools safely?
+## How does the model call tools safely across providers?
 
-The application exposes four custom functions through the Responses API. Their arguments use strict JSON Schema and are validated a second time with Pydantic before dispatch. Unknown tools and out-of-range parameters are rejected. Tool results are linked back with `call_id`, the loop has a fixed maximum number of rounds, and every accepted call is written to the SQLite task audit. The model has no arbitrary Python, shell, broker, or order-execution tool.
+The application supports Responses and Chat Completions through separate protocol adapters. Both normalize provider-specific tool calls into the same internal structure before strict JSON Schema and Pydantic validation. Unknown tools and out-of-range parameters are rejected. Tool results remain linked to their original call ids, the loop has a fixed maximum number of rounds, and every accepted call is written to the SQLite task audit. The model has no arbitrary Python, shell, broker, or order-execution tool.
 
 ## How is look-ahead bias prevented?
 
@@ -28,5 +28,6 @@ First build net value by cumulatively multiplying `1 + daily_return`. Then divid
 
 - When no real dataset is activated, the built-in OHLCV data is deterministic simulation data rather than exchange data.
 - The backtester currently assumes close-to-close execution and one-way linear costs; it does not yet model suspensions, price limits, or market impact.
-- Agent execution requires a valid DeepSeek API key and network access; model output can vary even though the numerical tools are deterministic.
+- Natural-language execution requires a valid key for the configured provider and network access; model output can vary even though the numerical tools are deterministic.
+- Provider compatibility depends on support for Function Calling and the selected `responses` or `chat_completions` protocol.
 - Production deployments should additionally add user authentication, rate limiting, monitoring, and stronger content-security controls.

@@ -44,7 +44,7 @@
 - 数据集与股票池管理；
 - 行情查询、五类现有因子、横截面 Top-K 回测；
 - 风险指标、净值曲线、回撤曲线、持仓及换手展示；
-- DeepSeek-V4-Flash Responses API 多轮工具调用；
+- 可配置模型服务的多轮工具调用，支持 Responses 与 Chat Completions 两种协议；
 - 任务、数据版本和回测结果审计；
 - 模拟数据演示模式和自动化测试。
 
@@ -152,7 +152,7 @@ date,symbol,open,high,low,close,volume
 
 | 编号 | 优先级 | 需求 |
 |---|---|---|
-| AGENT-001 | P0 | 使用 DeepSeek-V4-Flash Responses API，通过 Function Calling 编排受控研究工具。 |
+| AGENT-001 | P0 | 通过协议适配层支持 Responses API 与 Chat Completions Function Calling，并编排受控研究工具。 |
 | AGENT-002 | P0 | Agent 只负责意图识别、参数补全、工具选择和结果解释，不得自行计算或编造金融指标。 |
 | AGENT-003 | P0 | 用户显式参数优先；未指定时采用统一默认值：动量、20 日回看、Top-2、每 5 日调仓、5 bps。 |
 | AGENT-004 | P0 | 工具参数执行前必须通过 Pydantic 二次校验，未知工具、股票和越界参数必须拒绝。 |
@@ -247,7 +247,7 @@ date,symbol,open,high,low,close,volume
 ```text
 app/
   api/              FastAPI 路由、请求模型和错误映射
-  agent/            DeepSeek 客户端、提示词和工具循环
+  agent/            模型客户端、协议适配、提示词和工具循环
   application/      数据导入、研究任务和回测用例编排
   domain/           行情、因子、组合、回测和风险领域逻辑
   infrastructure/   SQLite、Parquet、文件存储和外部 Provider
@@ -257,7 +257,7 @@ app/
 约束：
 
 - FastAPI 路由不得直接操作 Pandas DataFrame 或拼装 SQL；
-- 领域层不得依赖 FastAPI、DeepSeek SDK 或具体数据库；
+- 领域层不得依赖 FastAPI、模型 SDK 或具体数据库；
 - Agent 工具调用应用层用例，不直接访问内部对象；
 - 外部行情源、模型和向量库均通过接口注入；
 - 应用启动不得隐式创建或切换真实数据集。
@@ -273,7 +273,7 @@ app/
 
 ### 10.2 安全
 
-- DeepSeek API Key 仅从环境变量读取，不进入数据库、日志、接口响应和 Git；
+- 模型 API Key 仅从环境变量读取，不进入数据库、日志、接口响应和 Git；
 - 上传文件限制扩展名、MIME、大小和解析耗时，防止路径穿越和资源耗尽；
 - 模型文本在页面渲染前转义 HTML；
 - Agent 仅能调用白名单工具；

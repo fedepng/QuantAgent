@@ -16,10 +16,20 @@ class Settings:
     database_path: Path
     random_seed: int
     dataset_path: Path | None = None
-    deepseek_api_key: str | None = None
-    deepseek_model: str = "deepseek-v4-flash"
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_max_tool_rounds: int = 6
+    llm_provider: str = "deepseek"
+    llm_protocol: str = "responses"
+    llm_api_key: str | None = None
+    llm_model: str = "deepseek-v4-flash"
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_max_tool_rounds: int = 6
+
+
+def _first_env(*names: str, default: str | None = None) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
 
 
 def load_settings() -> Settings:
@@ -35,8 +45,19 @@ def load_settings() -> Settings:
         database_path=database_path,
         random_seed=int(os.getenv("QUANTAGENT_SEED", "20260825")),
         dataset_path=dataset_path,
-        deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
-        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-        deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        deepseek_max_tool_rounds=int(os.getenv("DEEPSEEK_MAX_TOOL_ROUNDS", "6")),
+        llm_provider=_first_env("LLM_PROVIDER", default="deepseek") or "deepseek",
+        llm_protocol=_first_env("LLM_PROTOCOL", default="responses") or "responses",
+        llm_api_key=_first_env("LLM_API_KEY", "DEEPSEEK_API_KEY"),
+        llm_model=_first_env(
+            "LLM_MODEL", "DEEPSEEK_MODEL", default="deepseek-v4-flash"
+        )
+        or "deepseek-v4-flash",
+        llm_base_url=_first_env(
+            "LLM_BASE_URL", "DEEPSEEK_BASE_URL", default="https://api.deepseek.com"
+        )
+        or "https://api.deepseek.com",
+        llm_max_tool_rounds=int(
+            _first_env("LLM_MAX_TOOL_ROUNDS", "DEEPSEEK_MAX_TOOL_ROUNDS", default="6")
+            or "6"
+        ),
     )

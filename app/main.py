@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.agent import AgentExecutionError, AgentUnavailableError, DeepSeekResearchAgent
+from app.agent import AgentExecutionError, AgentUnavailableError, ResearchAgent
 from app.config import ROOT_DIR, Settings, load_settings
 from app.db import Database
 from app.datasets import DatasetService
@@ -20,7 +20,7 @@ from app.schemas import AgentRequest, BacktestRequest, FactorRequest
 from app.tools import ToolRegistry
 
 
-def create_app(settings: Settings | None = None, deepseek_client: Any | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, llm_client: Any | None = None) -> FastAPI:
     settings = settings or load_settings()
     database = Database(settings.database_path)
     database.initialize()
@@ -30,14 +30,16 @@ def create_app(settings: Settings | None = None, deepseek_client: Any | None = N
     factors = FactorEngine()
     backtests = BacktestEngine(factors)
     tools = ToolRegistry(market, factors, backtests, database)
-    agent = DeepSeekResearchAgent(
-        tools,
-        database,
-        settings.deepseek_api_key,
-        settings.deepseek_model,
-        settings.deepseek_base_url,
-        settings.deepseek_max_tool_rounds,
-        deepseek_client,
+    agent = ResearchAgent(
+        tools=tools,
+        database=database,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        base_url=settings.llm_base_url,
+        provider=settings.llm_provider,
+        protocol=settings.llm_protocol,
+        max_tool_rounds=settings.llm_max_tool_rounds,
+        client=llm_client,
     )
 
     @asynccontextmanager
@@ -46,7 +48,7 @@ def create_app(settings: Settings | None = None, deepseek_client: Any | None = N
 
     app = FastAPI(
         title="QuantAgent",
-        description="DeepSeek tool-calling quantitative research agent with deterministic tools.",
+        description="Multi-provider quantitative research assistant with deterministic tools.",
         version="2.0.0",
         lifespan=lifespan,
     )
@@ -72,7 +74,8 @@ def create_app(settings: Settings | None = None, deepseek_client: Any | None = N
             "symbols": len(market.symbols()),
             "dataset": market.dataset,
             "agent": {
-                "provider": "deepseek",
+                "provider": agent.provider,
+                "protocol": agent.protocol,
                 "model": agent.model,
                 "configured": agent.configured,
             },

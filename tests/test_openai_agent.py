@@ -5,7 +5,7 @@ import json
 import httpx
 from openai import OpenAI
 
-from app.agent import DeepSeekResearchAgent
+from app.agent import ResearchAgent
 from app.db import Database
 from app.quant.backtest import BacktestEngine
 from app.quant.factors import FactorEngine
@@ -65,19 +65,28 @@ class ScriptedResponses:
         )
 
 
-class ScriptedDeepSeek:
+class ScriptedResponsesClient:
     def __init__(self) -> None:
         self.responses = ScriptedResponses()
 
 
-def test_deepseek_agent_runs_multiple_tool_rounds(tmp_path: Path) -> None:
+def test_responses_agent_runs_multiple_tool_rounds(tmp_path: Path) -> None:
     database = Database(tmp_path / "agent.db")
     database.initialize()
     market = MarketDataService(42)
     factors = FactorEngine()
     tools = ToolRegistry(market, factors, BacktestEngine(factors), database)
-    client = ScriptedDeepSeek()
-    agent = DeepSeekResearchAgent(tools, database, None, "deepseek-v4-flash", client=client)
+    client = ScriptedResponsesClient()
+    agent = ResearchAgent(
+        tools,
+        database,
+        None,
+        "deepseek-v4-flash",
+        "https://api.deepseek.com",
+        provider="deepseek",
+        protocol="responses",
+        client=client,
+    )
 
     result = agent.run("使用30日动量因子，每10日调仓，选择前三并解释震荡风险")
 
@@ -96,7 +105,7 @@ def test_deepseek_agent_runs_multiple_tool_rounds(tmp_path: Path) -> None:
     assert len(task["plan"]) == 2
 
 
-def test_deepseek_responses_protocol_with_openai_sdk(tmp_path: Path) -> None:
+def test_responses_protocol_with_openai_sdk(tmp_path: Path) -> None:
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -155,10 +164,90 @@ def test_deepseek_responses_protocol_with_openai_sdk(tmp_path: Path) -> None:
     tools = ToolRegistry(market, factors, BacktestEngine(factors), database)
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     client = OpenAI(api_key="test-key", base_url="https://api.deepseek.test", http_client=http_client)
-    agent = DeepSeekResearchAgent(tools, database, None, "deepseek-v4-flash", client=client)
+    agent = ResearchAgent(
+        tools,
+        database,
+        None,
+        "deepseek-v4-flash",
+        "https://api.deepseek.test",
+        provider="deepseek",
+        protocol="responses",
+        client=client,
+    )
 
     result = agent.run("分析15日反转因子排名")
 
     assert result["answer"] == "反转因子排名已经计算完成。"
     assert result["plan"][0]["arguments"] == {"factor": "reversal", "lookback": 15}
     assert len(requests) == 2
+
+
+class ScriptedChatCompletions:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def create(self, **kwargs):
+        self.requests.append(kwargs)
+        if len(self.requests) == 1:
+            assert kwargs["messages"][0]["role"] == "system"
+            assert all("function" in tool for tool in kwargs["tools"])
+            call = SimpleNamespace(
+                id="chat_call_1",
+                type="function",
+                function=SimpleNamespace(
+                    name="factor_snapshot",
+                    arguments='{"factor":"momentum","lookback":20}',
+                ),
+            )
+            message = SimpleNamespace(content=None, tool_calls=[call])
+        else:
+            messages = kwargs["messages"]
+            assert any(message.get("tool_calls") for message in messages)
+            assert any(
+                message.get("role") == "tool"
+                and message.get("tool_call_id") == "chat_call_1"
+                for message in messages
+            )
+            message = SimpleNamespace(
+                content="动量因子排名已经计算完成。", tool_calls=[]
+            )
+        return SimpleNamespace(
+            id=f"chat_{len(self.requests)}",
+            choices=[SimpleNamespace(message=message)],
+            usage=SimpleNamespace(
+                prompt_tokens=50, completion_tokens=10, total_tokens=60
+            ),
+        )
+
+
+class ScriptedChatClient:
+    def __init__(self) -> None:
+        self.chat = SimpleNamespace(completions=ScriptedChatCompletions())
+
+
+def test_chat_completions_protocol_runs_tool_loop(tmp_path: Path) -> None:
+    database = Database(tmp_path / "chat.db")
+    database.initialize()
+    market = MarketDataService(42)
+    factors = FactorEngine()
+    tools = ToolRegistry(market, factors, BacktestEngine(factors), database)
+    client = ScriptedChatClient()
+    agent = ResearchAgent(
+        tools,
+        database,
+        None,
+        "compatible-chat-model",
+        "https://llm.example/v1",
+        provider="openai_compatible",
+        protocol="chat_completions",
+        client=client,
+    )
+
+    result = agent.run("分析20日动量因子排名")
+
+    assert result["provider"] == "openai_compatible"
+    assert result["protocol"] == "chat_completions"
+    assert result["answer"] == "动量因子排名已经计算完成。"
+    assert result["plan"][0]["tool"] == "factor_snapshot"
+    assert result["usage"][0]["prompt_tokens"] == 50
+    assert len(client.chat.completions.requests) == 2

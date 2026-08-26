@@ -20,21 +20,11 @@ QuantAgent 是一个可复现的量化研究工作台，支持通过自然语言
 
 需要 Python 3.11 或更高版本。
 
-项目未配置模型密钥时，行情导入、因子分析、策略回测和风险概览仍可直接使用。如需启用自然语言研究任务，复制环境变量示例并填写自己的 API Key：
+复制环境变量示例：
 
 ```powershell
 Copy-Item .env.example .env
 ```
-
-```env
-DEEPSEEK_API_KEY=sk-your-deepseek-api-key
-DEEPSEEK_MODEL=deepseek-v4-flash
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MAX_TOOL_ROUNDS=6
-QUANTAGENT_DATASET_PATH=data/datasets
-```
-
-`.env` 已加入 `.gitignore`，不要将真实密钥提交到 GitHub。
 
 ```powershell
 python -m venv .venv
@@ -65,6 +55,48 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1
 - 研究面板：<http://127.0.0.1:8000>
 - Swagger：<http://127.0.0.1:8000/docs>
 - 健康检查：<http://127.0.0.1:8000/health>
+
+## 模型 API 配置
+
+行情导入、因子分析、策略回测和风险概览不依赖模型。自然语言研究功能需要在 `.env` 中配置模型 API；`.env` 已加入 `.gitignore`，不要将真实密钥提交到 GitHub。
+
+项目提供两种工具调用协议：
+
+- `responses`：适用于支持 Responses API 的平台；
+- `chat_completions`：适用于支持 Chat Completions Function Calling 的兼容平台。
+
+默认示例：
+
+```env
+LLM_PROVIDER=deepseek
+LLM_PROTOCOL=responses
+LLM_API_KEY=sk-your-api-key
+LLM_MODEL=deepseek-v4-flash
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MAX_TOOL_ROUNDS=6
+```
+
+OpenAI Responses API 示例：
+
+```env
+LLM_PROVIDER=openai
+LLM_PROTOCOL=responses
+LLM_API_KEY=sk-your-openai-api-key
+LLM_MODEL=your-openai-model
+LLM_BASE_URL=https://api.openai.com/v1
+```
+
+OpenAI 兼容 Chat Completions 平台示例：
+
+```env
+LLM_PROVIDER=custom
+LLM_PROTOCOL=chat_completions
+LLM_API_KEY=your-provider-api-key
+LLM_MODEL=your-model-name
+LLM_BASE_URL=https://your-provider.example/v1
+```
+
+切换平台时必须确认目标接口支持 Function Calling。旧版 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MAX_TOOL_ROUNDS` 仍可读取，但新配置应使用 `LLM_*`。
 
 ## 导入真实行情
 
@@ -99,7 +131,7 @@ curl -X POST http://127.0.0.1:8000/api/agent/run \
 .\.venv\Scripts\python -m pytest
 ```
 
-测试覆盖：数据可复现、CSV 校验、Parquet 持久化、重启恢复、动态股票池、因子排名、交易成本、未来数据隔离、风险指标、API 参数校验、回测数据血缘，以及使用模拟 DeepSeek Responses 客户端验证的多轮 Function Calling。测试不会消耗真实 API 额度。
+测试覆盖：数据可复现、CSV 校验、Parquet 持久化、重启恢复、动态股票池、因子排名、交易成本、未来数据隔离、风险指标、API 参数校验、回测数据血缘，以及 Responses 与 Chat Completions 两种协议的多轮工具调用。测试不会消耗真实 API 额度。
 
 ## 目录
 
@@ -107,7 +139,7 @@ curl -X POST http://127.0.0.1:8000/api/agent/run \
 app/
   main.py              FastAPI 路由与依赖装配
   datasets.py          CSV 导入、数据质量、Parquet 与数据集切换
-  agent.py             DeepSeek Responses API 多轮工具调用编排
+  agent.py             多模型协议适配与多轮工具调用编排
   tools.py             工具白名单、严格 JSON Schema 与参数校验
   db.py                SQLite 事务与任务/回测持久化
   quant/                行情、因子、回测和风险指标
@@ -120,7 +152,7 @@ docs/                   架构和面试追问说明
 
 ## 数据声明
 
-未导入数据时，仓库使用固定随机种子生成的模拟行情，仅用于软件功能、因子时序和回测流程演示，不代表真实证券，也不构成投资建议。真实行情必须具有一致的复权口径；每次回测都会记录数据集 ID、内容哈希、实际股票、日期范围和程序版本。DeepSeek Agent 仅能调用预定义研究工具，不能执行任意代码或交易指令。
+未导入数据时，仓库使用固定随机种子生成的模拟行情，仅用于软件功能、因子时序和回测流程演示，不代表真实证券，也不构成投资建议。真实行情必须具有一致的复权口径；每次回测都会记录数据集 ID、内容哈希、实际股票、日期范围和程序版本。模型仅能调用预定义研究工具，不能执行任意代码或交易指令。
 
 ## License
 

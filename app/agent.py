@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
-from typing import Any
+from typing import Any, Protocol
 
 from openai import OpenAI
 
@@ -29,20 +30,237 @@ class AgentExecutionError(RuntimeError):
     pass
 
 
-class DeepSeekResearchAgent:
+@dataclass(frozen=True)
+class NormalizedToolCall:
+    call_id: str
+    name: str
+    arguments: str
+
+
+@dataclass
+class ModelTurn:
+    response_id: str | None
+    answer: str
+    calls: list[NormalizedToolCall]
+    usage: dict[str, Any] | None
+    raw: Any
+
+
+def _usage(response: Any) -> dict[str, Any] | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump()
+    if isinstance(usage, dict):
+        return usage
+    names = (
+        "input_tokens",
+        "output_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+    )
+    return {name: getattr(usage, name) for name in names if hasattr(usage, name)}
+
+
+def _chat_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for schema in schemas:
+        function = {
+            key: schema[key]
+            for key in ("name", "description", "parameters", "strict")
+            if key in schema
+        }
+        result.append({"type": "function", "function": function})
+    return result
+
+
+def _chat_message_dict(message: Any) -> dict[str, Any]:
+    if hasattr(message, "model_dump"):
+        return message.model_dump(exclude_none=True)
+    calls = []
+    for call in getattr(message, "tool_calls", None) or []:
+        function = getattr(call, "function")
+        calls.append(
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": function.name,
+                    "arguments": function.arguments,
+                },
+            }
+        )
+    result: dict[str, Any] = {
+        "role": "assistant",
+        "content": getattr(message, "content", None),
+    }
+    if calls:
+        result["tool_calls"] = calls
+    return result
+
+
+class ProtocolAdapter(Protocol):
+    name: str
+
+    def initial_state(self, user_input: str) -> list[Any]: ...
+
+    def request(
+        self,
+        client: Any,
+        model: str,
+        schemas: list[dict[str, Any]],
+        state: list[Any],
+    ) -> ModelTurn: ...
+
+    def append_model_turn(self, state: list[Any], turn: ModelTurn) -> None: ...
+
+    def append_tool_output(
+        self,
+        state: list[Any],
+        call: NormalizedToolCall,
+        output: dict[str, Any],
+    ) -> None: ...
+
+
+class ResponsesAdapter:
+    name = "responses"
+
+    def initial_state(self, user_input: str) -> list[Any]:
+        return [{"role": "user", "content": user_input}]
+
+    def request(
+        self,
+        client: Any,
+        model: str,
+        schemas: list[dict[str, Any]],
+        state: list[Any],
+    ) -> ModelTurn:
+        response = client.responses.create(
+            model=model,
+            instructions=AGENT_INSTRUCTIONS,
+            tools=schemas,
+            input=state,
+        )
+        calls = [
+            NormalizedToolCall(item.call_id, item.name, item.arguments)
+            for item in response.output
+            if getattr(item, "type", None) == "function_call"
+        ]
+        return ModelTurn(
+            response_id=getattr(response, "id", None),
+            answer=(getattr(response, "output_text", "") or "").strip(),
+            calls=calls,
+            usage=_usage(response),
+            raw=response.output,
+        )
+
+    def append_model_turn(self, state: list[Any], turn: ModelTurn) -> None:
+        state.extend(turn.raw)
+
+    def append_tool_output(
+        self,
+        state: list[Any],
+        call: NormalizedToolCall,
+        output: dict[str, Any],
+    ) -> None:
+        state.append(
+            {
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": json.dumps(output, ensure_ascii=False),
+            }
+        )
+
+
+class ChatCompletionsAdapter:
+    name = "chat_completions"
+
+    def initial_state(self, user_input: str) -> list[Any]:
+        return [
+            {"role": "system", "content": AGENT_INSTRUCTIONS},
+            {"role": "user", "content": user_input},
+        ]
+
+    def request(
+        self,
+        client: Any,
+        model: str,
+        schemas: list[dict[str, Any]],
+        state: list[Any],
+    ) -> ModelTurn:
+        response = client.chat.completions.create(
+            model=model,
+            messages=state,
+            tools=_chat_tools(schemas),
+            tool_choice="auto",
+        )
+        message = response.choices[0].message
+        calls = [
+            NormalizedToolCall(call.id, call.function.name, call.function.arguments)
+            for call in (getattr(message, "tool_calls", None) or [])
+            if getattr(call, "type", "function") == "function"
+        ]
+        content = getattr(message, "content", "") or ""
+        answer = content.strip() if isinstance(content, str) else str(content).strip()
+        return ModelTurn(
+            response_id=getattr(response, "id", None),
+            answer=answer,
+            calls=calls,
+            usage=_usage(response),
+            raw=message,
+        )
+
+    def append_model_turn(self, state: list[Any], turn: ModelTurn) -> None:
+        state.append(_chat_message_dict(turn.raw))
+
+    def append_tool_output(
+        self,
+        state: list[Any],
+        call: NormalizedToolCall,
+        output: dict[str, Any],
+    ) -> None:
+        state.append(
+            {
+                "role": "tool",
+                "tool_call_id": call.call_id,
+                "content": json.dumps(output, ensure_ascii=False),
+            }
+        )
+
+
+def create_protocol_adapter(protocol: str) -> ProtocolAdapter:
+    normalized = protocol.strip().lower().replace("-", "_")
+    if normalized == "responses":
+        return ResponsesAdapter()
+    if normalized in {"chat", "chat_completions"}:
+        return ChatCompletionsAdapter()
+    raise ValueError(
+        f"不支持的 LLM 协议：{protocol}。可选值为 responses、chat_completions。"
+    )
+
+
+class ResearchAgent:
     def __init__(
         self,
         tools: ToolRegistry,
         database: Database,
         api_key: str | None,
         model: str,
-        base_url: str = "https://api.deepseek.com",
+        base_url: str,
+        provider: str = "custom",
+        protocol: str = "responses",
         max_tool_rounds: int = 6,
         client: Any | None = None,
     ) -> None:
         self.tools = tools
         self.database = database
+        self.provider = provider.strip().lower() or "custom"
         self.model = model
+        self.base_url = base_url
+        self.adapter = create_protocol_adapter(protocol)
+        self.protocol = self.adapter.name
         self.max_tool_rounds = max_tool_rounds
         self.client = client or (
             OpenAI(api_key=api_key, base_url=base_url) if api_key else None
@@ -67,21 +285,6 @@ class DeepSeekResearchAgent:
         return "\n\n".join(parts)
 
     @staticmethod
-    def _usage(response: Any) -> dict[str, Any] | None:
-        usage = getattr(response, "usage", None)
-        if usage is None:
-            return None
-        if hasattr(usage, "model_dump"):
-            return usage.model_dump()
-        if isinstance(usage, dict):
-            return usage
-        return {
-            key: getattr(usage, key)
-            for key in ("input_tokens", "output_tokens", "total_tokens")
-            if hasattr(usage, key)
-        }
-
-    @staticmethod
     def _model_tool_output(name: str, output: dict[str, Any]) -> dict[str, Any]:
         if name != "run_backtest":
             return output
@@ -94,55 +297,50 @@ class DeepSeekResearchAgent:
             "latest_observations": output["series"][-5:],
         }
 
-    def _create_response(self, input_items: list[Any]) -> Any:
-        return self.client.responses.create(
-            model=self.model,
-            instructions=AGENT_INSTRUCTIONS,
-            tools=self.tools.schemas,
-            input=input_items,
-        )
-
     def run(self, query: str, **options: Any) -> dict[str, Any]:
         if not self.configured:
             raise AgentUnavailableError(
-                "DeepSeek Agent 尚未配置。请在 .env 中设置 DEEPSEEK_API_KEY 后重启服务。"
+                "自然语言研究功能尚未配置。请在 .env 中设置 LLM_API_KEY 后重启服务。"
             )
 
         plan: list[dict[str, Any]] = []
         steps: list[dict[str, Any]] = []
         usages: list[dict[str, Any]] = []
         task_id = self.database.create_task(
-            query, [{"agent": "deepseek", "model": self.model, "status": "planning"}]
+            query,
+            [
+                {
+                    "provider": self.provider,
+                    "protocol": self.protocol,
+                    "model": self.model,
+                    "status": "planning",
+                }
+            ],
         )
-        input_items: list[Any] = [
-            {"role": "user", "content": self._user_input(query, options)}
-        ]
+        state = self.adapter.initial_state(self._user_input(query, options))
 
         try:
-            response = self._create_response(input_items)
             for round_index in range(self.max_tool_rounds + 1):
-                usage = self._usage(response)
-                if usage:
-                    usages.append(usage)
+                turn = self.adapter.request(
+                    self.client, self.model, self.tools.schemas, state
+                )
+                if turn.usage:
+                    usages.append(turn.usage)
 
-                calls = [
-                    item
-                    for item in response.output
-                    if getattr(item, "type", None) == "function_call"
-                ]
-                if not calls:
-                    answer = (response.output_text or "").strip()
-                    if not answer:
-                        raise AgentExecutionError("DeepSeek Agent 未返回最终文本。")
+                if not turn.calls:
+                    if not turn.answer:
+                        raise AgentExecutionError("模型未返回最终文本。")
                     result = {
                         "task_id": task_id,
                         "query": query,
-                        "agent": "deepseek",
+                        "agent": self.provider,
+                        "provider": self.provider,
+                        "protocol": self.protocol,
                         "model": self.model,
-                        "response_id": getattr(response, "id", None),
+                        "response_id": turn.response_id,
                         "plan": plan,
                         "steps": steps,
-                        "answer": answer,
+                        "answer": turn.answer,
                         "usage": usages,
                     }
                     self.database.update_task_plan(task_id, plan)
@@ -151,11 +349,11 @@ class DeepSeekResearchAgent:
 
                 if round_index >= self.max_tool_rounds:
                     raise AgentExecutionError(
-                        f"DeepSeek Agent 超过最大工具调用轮数 {self.max_tool_rounds}。"
+                        f"模型超过最大工具调用轮数 {self.max_tool_rounds}。"
                     )
 
-                input_items.extend(response.output)
-                for call in calls:
+                self.adapter.append_model_turn(state, turn)
+                for call in turn.calls:
                     try:
                         raw_arguments = json.loads(call.arguments)
                     except json.JSONDecodeError as error:
@@ -175,16 +373,11 @@ class DeepSeekResearchAgent:
 
                     output = self.tools.call(call.name, arguments)
                     steps.append({**item, "output": output})
-                    model_output = self._model_tool_output(call.name, output)
-                    input_items.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": call.call_id,
-                            "output": json.dumps(model_output, ensure_ascii=False),
-                        }
+                    self.adapter.append_tool_output(
+                        state,
+                        call,
+                        self._model_tool_output(call.name, output),
                     )
-
-                response = self._create_response(input_items)
         except AgentUnavailableError:
             raise
         except AgentExecutionError as error:
@@ -192,9 +385,13 @@ class DeepSeekResearchAgent:
             self.database.fail_task(task_id, str(error))
             raise
         except Exception as error:
-            message = f"DeepSeek Agent 调用失败：{error}"
+            message = f"模型调用失败：{error}"
             self.database.update_task_plan(task_id, plan)
             self.database.fail_task(task_id, message)
             raise AgentExecutionError(message) from error
 
-        raise AgentExecutionError("DeepSeek Agent 未能完成任务。")
+        raise AgentExecutionError("模型未能完成任务。")
+
+
+# 保留旧导入名，避免现有调用方立即失效。
+DeepSeekResearchAgent = ResearchAgent

@@ -13,7 +13,7 @@ FastAPI validation layer
         |               +--------> SQLite dataset metadata
         |
         v
-DeepSeek Responses Agent --> SQLite task audit
+LLM protocol adapter --> SQLite task audit
         |
         v
 ToolRegistry
@@ -26,17 +26,17 @@ data      engine       engine
      SQLite + Parquet
 ```
 
-DeepSeek-V4-Flash interprets natural language and emits strict custom function calls. Every call is validated again with Pydantic and dispatched through an allow-listed `ToolRegistry`. The model never calculates financial numbers from prose: market data, factors, backtest series, and risk metrics come from deterministic Pandas/NumPy code.
+The configured model interprets natural language and emits custom function calls. `ResponsesAdapter` handles Responses API items, while `ChatCompletionsAdapter` handles assistant `tool_calls` and tool messages. Both normalize calls before Pydantic validation and dispatch through the same allow-listed `ToolRegistry`. The model never calculates financial numbers from prose: market data, factors, backtest series, and risk metrics come from deterministic Pandas/NumPy code.
 
 ## Agent loop
 
-1. Send the user request, developer instructions, and strict function schemas to the Responses API.
+1. Send the user request, instructions, and function schemas through the configured protocol adapter.
 2. Validate each returned function name and JSON argument object.
 3. Execute the corresponding local tool and persist its full result.
-4. Return a compact `function_call_output` using the original `call_id`.
+4. Return a compact tool result using the protocol's required message format and original call id.
 5. Repeat until the model returns final text or the configured tool-round limit is reached.
 
-The DeepSeek Responses API is stateless. Its credentials are read from `.env` and never stored in SQLite. The current dataset and dynamic symbol list are included in the research context.
+Provider, protocol, model, base URL and credential are read from `LLM_*` environment variables. Legacy `DEEPSEEK_*` variables remain a fallback for existing installations. Credentials are never stored in SQLite, and the current dataset and dynamic symbol list are included in the research context.
 
 ## Dataset lifecycle
 

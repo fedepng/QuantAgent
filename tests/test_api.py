@@ -43,14 +43,14 @@ class FakeResponses:
         )
 
 
-class FakeDeepSeek:
+class FakeLLM:
     def __init__(self) -> None:
         self.responses = FakeResponses()
 
 
-def make_client(tmp_path: Path, deepseek_client=None) -> TestClient:
+def make_client(tmp_path: Path, llm_client=None) -> TestClient:
     settings = Settings(database_path=tmp_path / "api.db", random_seed=42)
-    return TestClient(create_app(settings, deepseek_client=deepseek_client))
+    return TestClient(create_app(settings, llm_client=llm_client))
 
 
 def test_health_and_tool_schemas(tmp_path: Path) -> None:
@@ -59,7 +59,10 @@ def test_health_and_tool_schemas(tmp_path: Path) -> None:
         assert health.status_code == 200
         assert health.json()["symbols"] == 6
         assert health.json()["agent"] == {
-            "provider": "deepseek", "model": "deepseek-v4-flash", "configured": False
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "configured": False,
         }
         tools = client.get("/api/tools").json()
         assert {item["name"] for item in tools} == {
@@ -81,7 +84,7 @@ def test_backtest_and_persistence(tmp_path: Path) -> None:
 
 
 def test_agent_workflow(tmp_path: Path) -> None:
-    fake = FakeDeepSeek()
+    fake = FakeLLM()
     with make_client(tmp_path, fake) as client:
         agent = client.post(
             "/api/agent/run",
@@ -97,8 +100,8 @@ def test_agent_workflow(tmp_path: Path) -> None:
         assert tasks[0]["status"] == "completed"
 
 
-def test_agent_requires_deepseek_configuration(tmp_path: Path) -> None:
+def test_agent_requires_llm_configuration(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         response = client.post("/api/agent/run", json={"query": "回测动量因子"})
         assert response.status_code == 503
-        assert "DEEPSEEK_API_KEY" in response.json()["detail"]
+        assert "LLM_API_KEY" in response.json()["detail"]
