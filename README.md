@@ -37,7 +37,7 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-至少填写自己的 API Key：
+填写自己的 API Key：
 
 ```env
 LLM_API_KEY=你的API密钥
