@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">REPRODUCIBLE QUANT RESEARCH</p>
       <h1>QuantAgent</h1>
-      <p class="subtitle">把自然语言研究任务拆成可校验的行情、因子、回测、风险与知识检索工具。</p>
+      <p class="subtitle">把研究需求拆成可校验的行情、因子、回测与风险分析流程。</p>
     </div>
     <div class="status" id="health">正在连接服务...</div>
   </header>
@@ -38,14 +38,14 @@
       <article class="panel agent-panel">
         <div class="panel-title">
           <div><span>01</span><h2>研究任务</h2></div>
-          <button id="run-agent">运行 Agent</button>
+          <button id="run-agent">运行研究任务</button>
         </div>
         <textarea id="agent-query" rows="5">请回测20日动量因子，选择前2只资产，每5日调仓，并说明最大回撤</textarea>
         <div class="quick-actions">
           <button data-query="分析20日动量因子的当前排名">因子排名</button>
           <button data-query="查看 ALPHA 最近30日行情">行情查询</button>
         </div>
-        <div id="agent-result" class="result muted">DeepSeek-V4-Flash Agent 将理解任务、提取参数并按需调用量化工具。</div>
+        <div id="agent-result" class="result muted">输入研究需求后，系统将提取参数并按需调用量化工具。</div>
       </article>
 
       <article class="panel metric-panel">
@@ -92,7 +92,7 @@
     </section>
   </main>
 
-  <footer>QuantAgent · DeepSeek Responses API / FastAPI / Pandas / NumPy / Parquet / SQLite</footer>
+  <footer>QuantAgent · FastAPI / Pandas / NumPy / Parquet / SQLite</footer>
   <script src="/static/app.js"></script>
 </body>
 </html>

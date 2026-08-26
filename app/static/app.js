@@ -138,9 +138,8 @@ function drawDrawdown(series) {
 
 async function refreshHealth() {
   const health = await api("/health");
-  const agentStatus = health.agent.configured ? `${health.agent.model} READY` : "DEEPSEEK KEY MISSING";
   const datasetName = health.dataset.name || "UNKNOWN DATASET";
-  $("#health").textContent = `${health.status.toUpperCase()} · ${agentStatus} · ${datasetName} · ${health.symbols} ASSETS`;
+  $("#health").textContent = `${health.status.toUpperCase()} · ${datasetName} · ${health.symbols} ASSETS`;
   $("#health").classList.add("online");
   return health;
 }
@@ -205,10 +204,10 @@ async function runBacktest() {
 }
 
 async function runAgent() {
-  const node = $("#agent-result"); node.textContent = "Agent 正在拆解任务并调用工具...";
+  const node = $("#agent-result"); node.textContent = "正在解析需求并调用量化工具...";
   try {
     const result = await api("/api/agent/run", { method: "POST", body: JSON.stringify({ query: $("#agent-query").value }) });
-    const trace = `任务 #${result.task_id} · ${result.model} · ${result.plan.map(item => item.tool).join(" → ")}`;
+    const trace = `任务 #${result.task_id} · ${result.plan.map(item => item.tool).join(" → ")}`;
     node.innerHTML = `<div class="markdown-body">${renderMarkdown(result.answer)}</div><div class="citation">${escapeHtml(trace)}</div>`;
     const backtest = result.steps.find(step => step.tool === "run_backtest");
     if (backtest) { updateMetrics(backtest.output.metrics); drawEquity(backtest.output.series); drawDrawdown(backtest.output.series); }

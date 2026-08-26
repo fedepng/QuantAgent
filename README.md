@@ -1,6 +1,6 @@
 # QuantAgent 量化研究智能体
 
-QuantAgent 是一个基于 DeepSeek Responses API Function Calling 的可复现量化研究工作台。DeepSeek-V4-Flash Agent 负责理解自然语言、提取参数和多轮工具规划，行情、因子、回测与风险数值由 Pandas/NumPy 确定性计算。真实行情标准化为 Parquet，数据版本、研究参数、工具轨迹和回测结果保存到 SQLite。
+QuantAgent 是一个可复现的量化研究工作台，支持通过自然语言理解研究需求并调用受控工具。行情、因子、回测与风险数值由 Pandas/NumPy 确定性计算；真实行情标准化为 Parquet，数据版本、研究参数、工具轨迹和回测结果保存到 SQLite。
 
 ## 功能
 
@@ -11,7 +11,7 @@ QuantAgent 是一个基于 DeepSeek Responses API Function Calling 的可复现�
 - 动量、短期反转、低波动、均线偏离和成交量 Z-Score 因子；
 - 横截面 Top-K 回测，信号滞后一日、固定周期调仓并按换手率扣除交易成本；
 - 累计/年化收益、波动率、夏普、最大回撤、Calmar、VaR、CVaR 和胜率；
-- DeepSeek-V4-Flash Agent 自然语言参数提取、多轮 Function Calling 与最终研究解释；
+- 可选的自然语言参数提取、多轮工具调用与研究结果解释；
 - 严格 JSON Schema、Pydantic 二次校验、工具白名单和最大调用轮数；
 - FastAPI/Swagger 接口和原生 Web 研究面板；
 - 单元、数据导入、API 与端到端工作流测试。
@@ -20,7 +20,7 @@ QuantAgent 是一个基于 DeepSeek Responses API Function Calling 的可复现�
 
 需要 Python 3.11 或更高版本。
 
-复制环境变量示例并填写自己的 DeepSeek API Key：
+项目未配置模型密钥时，行情导入、因子分析、策略回测和风险概览仍可直接使用。如需启用自然语言研究任务，复制环境变量示例并填写自己的 API Key：
 
 ```powershell
 Copy-Item .env.example .env
