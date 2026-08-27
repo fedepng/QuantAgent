@@ -17,7 +17,8 @@ def test_demo_market_is_reproducible() -> None:
 
 def test_factor_snapshot_returns_all_symbols() -> None:
     market = generate_demo_market(42, periods=100)
-    ranking = FactorEngine().snapshot(market, "momentum", 20)
+    snapshot = FactorEngine().snapshot(market, "momentum", 20)
+    ranking = snapshot["ranking"]
     assert len(ranking) == 6
     assert [item["rank"] for item in ranking] == list(range(1, 7))
     assert all(np.isfinite(item["value"]) for item in ranking)
@@ -50,4 +51,3 @@ def test_risk_metrics_have_expected_drawdown() -> None:
     metrics = calculate_metrics(returns)
     assert metrics["max_drawdown"] == -0.2
     assert metrics["daily_cvar_95"] <= metrics["daily_var_95"]
-

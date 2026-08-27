@@ -32,7 +32,7 @@ The configured model interprets natural language and emits custom function calls
 
 1. Send the user request, instructions, and function schemas through the configured protocol adapter.
 2. Validate each returned function name and JSON argument object.
-3. Execute the corresponding local tool and persist its full result.
+3. Create an independent tool-call record, execute the local tool, then save duration, status, compact summary, error and optional backtest id.
 4. Return a compact tool result using the protocol's required message format and original call id.
 5. Repeat until the model returns final text or the configured tool-round limit is reached.
 
@@ -48,14 +48,15 @@ Provider, protocol, model, base URL and credential are read from `LLM_*` environ
 6. Activate the dataset and replace the in-memory market frame.
 7. Restore the active dataset from SQLite and Parquet after restart.
 
-Backtest provenance includes the dataset id and hash, actual symbol list, effective date range and application version. API responses never expose the internal storage path.
+The database stores a relative Parquet key. Activation and restart recovery verify readability and the normalized-data hash; failures leave the service explicitly degraded. Backtest provenance includes raw and normalized hashes, dataset metadata, actual symbols, effective range, Git commit, and factor/risk/backtest methodology versions. API responses never expose the internal storage path.
 
 ## Backtest timing
 
-1. Calculate factors from close prices through day `t`.
-2. Shift the complete signal matrix by one trading day.
-3. On a rebalance day, select the top `k` symbols from the lagged signal.
-4. Apply those weights to the current day's asset returns.
-5. Deduct `turnover * transaction_cost_bps / 10000`.
+1. Read pre-start observations to warm up the requested factor window.
+2. Shift the complete signal matrix by one research day.
+3. Start the rebalance clock on the first day that can form a Top-K portfolio.
+4. Before later rebalances, drift prior weights by realized asset returns.
+5. Compare the target weights with drifted weights and deduct `turnover * transaction_cost_bps / 10000`.
+6. Fail explicitly if a held asset lacks its close-to-close return.
 
-This ordering prevents the strategy from using the current closing price before earning the current close-to-close return.
+Initial entry cost is charged once and final liquidation is not assumed. This ordering prevents the strategy from using the current closing price before earning the current close-to-close return.

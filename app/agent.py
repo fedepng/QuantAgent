@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Protocol
 
 from openai import OpenAI
+from pydantic import ValidationError
 
 from app.db import Database
+from app.errors import QuantAgentError
 from app.tools import ToolRegistry
-
 
 AGENT_INSTRUCTIONS = """
 你是 QuantAgent，一名量化研究助手。你的职责是理解用户需求、调用工具并基于工具结果作答。
@@ -81,7 +83,7 @@ def _chat_message_dict(message: Any) -> dict[str, Any]:
         return message.model_dump(exclude_none=True)
     calls = []
     for call in getattr(message, "tool_calls", None) or []:
-        function = getattr(call, "function")
+        function = call.function
         calls.append(
             {
                 "id": call.id,
@@ -306,6 +308,15 @@ class ResearchAgent:
         plan: list[dict[str, Any]] = []
         steps: list[dict[str, Any]] = []
         usages: list[dict[str, Any]] = []
+        research_metadata: dict[str, Any] = {
+            "dataset": self.tools.market.dataset,
+            "backtest_ids": [],
+        }
+        def persisted_plan() -> list[dict[str, Any]]:
+            return [
+                {key: value for key, value in item.items() if key != "arguments"}
+                for item in plan
+            ]
         task_id = self.database.create_task(
             query,
             [
@@ -342,9 +353,17 @@ class ResearchAgent:
                         "steps": steps,
                         "answer": turn.answer,
                         "usage": usages,
+                        "research_metadata": research_metadata,
                     }
-                    self.database.update_task_plan(task_id, plan)
-                    self.database.finish_task(task_id, result)
+                    self.database.update_task_plan(task_id, persisted_plan())
+                    persisted = {
+                        "task_id": task_id,
+                        "answer": turn.answer,
+                        "call_ids": [item["call_record_id"] for item in plan],
+                        "research_metadata": research_metadata,
+                        "usage": usages,
+                    }
+                    self.database.finish_task(task_id, persisted)
                     return result
 
                 if round_index >= self.max_tool_rounds:
@@ -354,44 +373,91 @@ class ResearchAgent:
 
                 self.adapter.append_model_turn(state, turn)
                 for call in turn.calls:
+                    started = perf_counter()
+                    record_id = self.database.start_tool_call(
+                        task_id, round_index + 1, call.call_id, call.name, None
+                    )
                     try:
                         raw_arguments = json.loads(call.arguments)
                     except json.JSONDecodeError as error:
+                        self.database.finish_tool_call(
+                            record_id,
+                            duration_ms=(perf_counter() - started) * 1000,
+                            error_code="INVALID_TOOL_ARGUMENT_JSON",
+                            error_message=f"工具 {call.name} 的参数不是合法 JSON。",
+                        )
                         raise AgentExecutionError(
                             f"工具 {call.name} 的参数不是合法 JSON。"
                         ) from error
-
-                    arguments = self.tools.validate_call(call.name, raw_arguments)
-                    item = {
-                        "round": round_index + 1,
-                        "call_id": call.call_id,
-                        "tool": call.name,
-                        "arguments": arguments,
-                    }
-                    plan.append(item)
-                    self.database.update_task_plan(task_id, plan)
-
-                    output = self.tools.call(call.name, arguments)
-                    steps.append({**item, "output": output})
+                    try:
+                        arguments = self.tools.validate_call(call.name, raw_arguments)
+                        with self.database.connect() as connection:
+                            connection.execute(
+                                "UPDATE tool_calls SET arguments_json=? WHERE id=?",
+                                (json.dumps(arguments, ensure_ascii=False), record_id),
+                            )
+                        item = {
+                            "round": round_index + 1,
+                            "call_id": call.call_id,
+                            "tool": call.name,
+                            "call_record_id": record_id,
+                            "arguments": arguments,
+                        }
+                        plan.append(item)
+                        self.database.update_task_plan(task_id, persisted_plan())
+                        output = self.tools.call(call.name, arguments)
+                        model_output = self._model_tool_output(call.name, output)
+                        backtest_id = output.get("id") if call.name == "run_backtest" else None
+                        if backtest_id is not None:
+                            research_metadata["backtest_ids"].append(backtest_id)
+                        summary = {
+                            key: model_output[key]
+                            for key in ("id", "strategy", "parameters", "metrics", "methodology", "as_of_date")
+                            if key in model_output
+                        }
+                        if call.name == "market_snapshot":
+                            summary = {
+                                "symbol": output["symbol"],
+                                "observation_count": len(output["prices"]),
+                                "start_date": output["prices"][0]["date"],
+                                "end_date": output["prices"][-1]["date"],
+                            }
+                        self.database.finish_tool_call(
+                            record_id,
+                            duration_ms=(perf_counter() - started) * 1000,
+                            summary=summary,
+                            backtest_id=backtest_id,
+                        )
+                    except Exception as error:
+                        if isinstance(error, QuantAgentError):
+                            code = error.code
+                        elif isinstance(error, ValidationError):
+                            code = "INVALID_TOOL_ARGUMENTS"
+                        else:
+                            code = "TOOL_EXECUTION_FAILED"
+                        self.database.finish_tool_call(
+                            record_id,
+                            duration_ms=(perf_counter() - started) * 1000,
+                            error_code=code,
+                            error_message=str(error),
+                        )
+                        raise
+                    steps.append({"call_record_id": record_id, "tool": call.name, "output": output})
                     self.adapter.append_tool_output(
                         state,
                         call,
-                        self._model_tool_output(call.name, output),
+                        model_output,
                     )
         except AgentUnavailableError:
             raise
         except AgentExecutionError as error:
-            self.database.update_task_plan(task_id, plan)
+            self.database.update_task_plan(task_id, persisted_plan())
             self.database.fail_task(task_id, str(error))
             raise
         except Exception as error:
             message = f"模型调用失败：{error}"
-            self.database.update_task_plan(task_id, plan)
+            self.database.update_task_plan(task_id, persisted_plan())
             self.database.fail_task(task_id, message)
             raise AgentExecutionError(message) from error
 
         raise AgentExecutionError("模型未能完成任务。")
-
-
-# 保留旧导入名，避免现有调用方立即失效。
-DeepSeekResearchAgent = ResearchAgent

@@ -104,4 +104,5 @@ def test_agent_requires_llm_configuration(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         response = client.post("/api/agent/run", json={"query": "回测动量因子"})
         assert response.status_code == 503
-        assert "LLM_API_KEY" in response.json()["detail"]
+        assert response.json()["code"] == "MODEL_NOT_CONFIGURED"
+        assert "LLM_API_KEY" in response.json()["message"]

@@ -6,7 +6,7 @@ An LLM is useful for interpreting a request, but it should not invent market pri
 
 ## How is real market data made reproducible?
 
-Every CSV import is validated, hashed with SHA-256 and stored as an immutable original file plus a normalized Parquet file. SQLite stores its date range, adjustment mode, symbol and row counts, quality report and active state. Every backtest references the dataset id and hash together with its actual symbols and date range, so the same research run can be reproduced after restart.
+Every CSV import has separate raw-file and canonical normalized-data SHA-256 hashes and is stored as an immutable original plus normalized Parquet. SQLite stores a portable relative path, date range, adjustment mode, counts, quality report and active state. Activation verifies Parquet readability and its normalized hash. Every backtest references that hash, the Git commit, actual symbols, range and methodology versions.
 
 ## How does the model call tools safely across providers?
 
@@ -18,11 +18,11 @@ The factor matrix is shifted by one trading day before portfolio construction. A
 
 ## How are transaction costs modeled?
 
-At each rebalance, turnover is the sum of absolute changes in asset weights. Cost is turnover multiplied by the configured one-way basis-point rate. It is deducted from the same day's gross portfolio return. The test suite confirms that increasing cost cannot improve cumulative return.
+Between rebalances weights drift with relative asset performance. At a rebalance, turnover is the sum of absolute differences between those pre-trade drifted weights and the new target. Cost is turnover multiplied by the configured one-way basis-point rate and is deducted from that day's gross return. Initial entry is charged once; final liquidation is not assumed.
 
 ## How is maximum drawdown calculated?
 
-First build net value by cumulatively multiplying `1 + daily_return`. Then divide each value by the historical running maximum and subtract one. The minimum of that drawdown series is maximum drawdown.
+First build net value by cumulatively multiplying `1 + daily_return`. The running-maximum baseline explicitly starts at 1.0, so a first-day loss is a real drawdown. Divide each dated value by that running maximum and subtract one; the minimum is maximum drawdown.
 
 ## Current limitations
 

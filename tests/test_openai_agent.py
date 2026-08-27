@@ -1,6 +1,6 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
-import json
 
 import httpx
 from openai import OpenAI

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT_DIR / ".env")
@@ -22,6 +21,7 @@ class Settings:
     llm_model: str = "deepseek-v4-flash"
     llm_base_url: str = "https://api.deepseek.com"
     llm_max_tool_rounds: int = 6
+    cors_origins: tuple[str, ...] = ()
 
 
 def _first_env(*names: str, default: str | None = None) -> str | None:
@@ -41,6 +41,11 @@ def load_settings() -> Settings:
     dataset_path = Path(dataset_value)
     if not dataset_path.is_absolute():
         dataset_path = ROOT_DIR / dataset_path
+    cors_origins = tuple(
+        origin.strip()
+        for origin in os.getenv("QUANTAGENT_CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    )
     return Settings(
         database_path=database_path,
         random_seed=int(os.getenv("QUANTAGENT_SEED", "20260825")),
@@ -60,4 +65,5 @@ def load_settings() -> Settings:
             _first_env("LLM_MAX_TOOL_ROUNDS", "DEEPSEEK_MAX_TOOL_ROUNDS", default="6")
             or "6"
         ),
+        cors_origins=cors_origins,
     )

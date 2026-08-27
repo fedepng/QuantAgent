@@ -98,7 +98,8 @@ def test_invalid_ohlc_is_rejected_without_partial_dataset(tmp_path: Path) -> Non
             data={"name": "invalid"},
         )
         assert response.status_code == 422
-        assert "Invalid OHLC relationship" in response.json()["detail"]
+        assert response.json()["code"] == "INVALID_MARKET_DATA"
+        assert response.json()["details"]["errors"][0]["field"] == "ohlc"
         assert client.get("/api/datasets").json() == []
 
 
@@ -116,5 +117,5 @@ def test_duplicate_file_is_rejected(tmp_path: Path) -> None:
             data={"name": "second"},
         )
         assert first.status_code == 201
-        assert second.status_code == 422
-        assert "already exists" in second.json()["detail"]
+        assert second.status_code == 409
+        assert second.json()["code"] == "DUPLICATE_DATASET"

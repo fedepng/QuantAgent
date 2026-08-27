@@ -43,7 +43,7 @@
         <textarea id="agent-query" rows="5">请回测20日动量因子，选择前2只资产，每5日调仓，并说明最大回撤</textarea>
         <div class="quick-actions">
           <button data-query="分析20日动量因子的当前排名">因子排名</button>
-          <button data-query="查看 ALPHA 最近30日行情">行情查询</button>
+          <button id="price-quick">行情查询</button>
         </div>
         <div id="agent-result" class="result muted">输入研究需求后，系统将提取参数并按需调用量化工具。</div>
       </article>
@@ -53,11 +53,19 @@
         <div class="metrics" id="metrics">
           <div><small>累计收益</small><strong>--</strong></div>
           <div><small>年化收益</small><strong>--</strong></div>
+          <div><small>年化波动</small><strong>--</strong></div>
           <div><small>夏普比率</small><strong>--</strong></div>
           <div><small>最大回撤</small><strong>--</strong></div>
+          <div><small>Calmar</small><strong>--</strong></div>
+          <div><small>日 VaR 95%</small><strong>--</strong></div>
+          <div><small>日 CVaR 95%</small><strong>--</strong></div>
+          <div><small>胜率</small><strong>--</strong></div>
+          <div><small>日均换手</small><strong>--</strong></div>
         </div>
         <canvas id="equity-chart" width="760" height="300"></canvas>
+        <div class="chart-caption" id="equity-caption"></div>
         <canvas id="drawdown-chart" width="760" height="180"></canvas>
+        <div class="chart-caption" id="drawdown-caption"></div>
       </article>
     </section>
 
@@ -86,7 +94,8 @@
           <label>开始日期<input id="backtest-start" type="date"></label>
           <label>结束日期<input id="backtest-end" type="date"></label>
         </div>
-        <pre id="backtest-detail">等待回测...</pre>
+        <div id="backtest-detail" class="result muted">等待回测...</div>
+        <div id="backtest-history" class="dataset-list"></div>
       </article>
 
     </section>

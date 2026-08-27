@@ -4,8 +4,21 @@ async function api(path, options = {}) {
   const headers = options.body instanceof FormData ? (options.headers || {}) : { "Content-Type": "application/json", ...(options.headers || {}) };
   const response = await fetch(path, { ...options, headers });
   const body = await response.json();
-  if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = body.details?.errors?.[0];
+    const suffix = detail ? `（第 ${detail.row || "?"} 行 ${detail.field}: ${detail.reason}）` : "";
+    throw new Error(`${body.message || body.detail || `HTTP ${response.status}`}${suffix}`);
+  }
   return body;
+}
+
+let currentSeries = [];
+let currentSymbols = [];
+
+async function guarded(button, action) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try { await action(); } finally { button.disabled = false; }
 }
 
 function pct(value) { return `${(value * 100).toFixed(2)}%`; }
@@ -92,7 +105,12 @@ function renderMarkdown(markdown) {
 }
 
 function updateMetrics(metrics) {
-  const values = [pct(metrics.total_return), pct(metrics.annual_return), metrics.sharpe_ratio.toFixed(2), pct(metrics.max_drawdown)];
+  const values = [
+    pct(metrics.total_return), pct(metrics.annual_return), pct(metrics.annual_volatility),
+    metrics.sharpe_ratio.toFixed(2), pct(metrics.max_drawdown), metrics.calmar_ratio.toFixed(2),
+    pct(metrics.daily_var_95), pct(metrics.daily_cvar_95), pct(metrics.win_rate),
+    pct(metrics.average_daily_turnover),
+  ];
   document.querySelectorAll("#metrics strong").forEach((node, index) => node.textContent = values[index]);
 }
 
@@ -109,11 +127,12 @@ function drawEquity(series) {
   const min = Math.min(...values), max = Math.max(...values), spread = Math.max(max - min, .01);
   context.strokeStyle = "#7be0b7"; context.lineWidth = 2; context.beginPath();
   values.forEach((value, index) => {
-    const x = 12 + index / (values.length - 1) * (width - 24);
+    const x = 12 + index / Math.max(values.length - 1, 1) * (width - 24);
     const y = height - 18 - (value - min) / spread * (height - 36);
     index ? context.lineTo(x, y) : context.moveTo(x, y);
   });
   context.stroke();
+  $("#equity-caption").innerHTML = `<span>${escapeHtml(series[0].date)} · ${min.toFixed(3)}</span><span>${escapeHtml(series.at(-1).date)} · ${max.toFixed(3)}</span>`;
 }
 
 function drawDrawdown(series) {
@@ -134,6 +153,7 @@ function drawDrawdown(series) {
     index ? context.lineTo(x, y) : context.moveTo(x, y);
   });
   context.stroke(); context.lineTo(width - 12, 12); context.lineTo(12, 12); context.closePath(); context.fill();
+  $("#drawdown-caption").innerHTML = `<span>最大回撤 ${pct(min)}</span><span>0%</span>`;
 }
 
 async function refreshHealth() {
@@ -141,19 +161,25 @@ async function refreshHealth() {
   const datasetName = health.dataset.name || "UNKNOWN DATASET";
   $("#health").textContent = `${health.status.toUpperCase()} · ${datasetName} · ${health.symbols} ASSETS`;
   $("#health").classList.add("online");
+  currentSymbols = await api("/api/market/symbols");
+  const quickSymbol = currentSymbols[0];
+  $("#price-quick").disabled = !quickSymbol;
+  $("#price-quick").dataset.query = quickSymbol ? `查看 ${quickSymbol} 最近30日行情` : "";
   return health;
 }
 
 async function loadDatasets() {
   const [datasets, health] = await Promise.all([api("/api/datasets"), api("/health")]);
   const current = health.dataset;
-  $("#dataset-status").innerHTML = `<strong>${escapeHtml(current.name)}</strong><div>${escapeHtml(`${current.market || "UNKNOWN"} · ${current.is_demo ? "演示数据" : `${current.start_date} 至 ${current.end_date}`} · ${health.symbols} 只资产`)}</div>`;
+  const quality = current.quality ? ` · 缺失交易日股票 ${Object.keys(current.quality.missing_trading_days_by_symbol || {}).length} 只` : "";
+  $("#dataset-status").innerHTML = `<strong>${escapeHtml(current.name)}</strong><div>${escapeHtml(`${current.market || "UNKNOWN"} · ${current.is_demo ? "演示数据" : `${current.start_date} 至 ${current.end_date}`} · ${health.symbols} 只资产${quality}`)}</div>`;
   $("#dataset-list").innerHTML = datasets.map(item => `<div class="dataset-item"><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(`#${item.id} · ${item.market} · ${item.adjustment} · ${item.start_date} 至 ${item.end_date} · ${item.symbol_count} 只 · ${item.row_count} 行`)}</small></div>${item.active ? '<span class="active-badge">当前数据集</span>' : `<button data-activate-dataset="${item.id}">启用</button>`}</div>`).join("");
   document.querySelectorAll("[data-activate-dataset]").forEach(button => button.addEventListener("click", async () => {
     button.disabled = true;
     try {
       await api(`/api/datasets/${button.dataset.activateDataset}/activate`, { method: "POST" });
       await Promise.all([loadDatasets(), refreshHealth()]);
+      $("#factor-symbols").value = ""; $("#backtest-symbols").value = "";
     } catch (error) { $("#dataset-status").innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`; }
   }));
 }
@@ -171,7 +197,8 @@ async function importDataset() {
   $("#dataset-status").textContent = "正在校验并导入行情数据...";
   try {
     const dataset = await api("/api/datasets/import", { method: "POST", body: form });
-    $("#dataset-status").innerHTML = `<strong>导入成功：${escapeHtml(dataset.name)}</strong><div>${escapeHtml(`${dataset.start_date} 至 ${dataset.end_date} · ${dataset.symbol_count} 只 · ${dataset.row_count} 行`)}</div>`;
+    const missing = Object.keys(dataset.quality.missing_trading_days_by_symbol || {}).length;
+    $("#dataset-status").innerHTML = `<strong>导入成功：${escapeHtml(dataset.name)}</strong><div>${escapeHtml(`${dataset.start_date} 至 ${dataset.end_date} · ${dataset.symbol_count} 只 · ${dataset.row_count} 行 · 重复 0 行 · 缺失交易日股票 ${missing} 只`)}</div>`;
     await Promise.all([loadDatasets(), refreshHealth()]);
   } catch (error) { $("#dataset-status").innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`; }
 }
@@ -187,9 +214,9 @@ async function runFactor() {
   };
   try {
     const result = await api("/api/factors/analyze", { method: "POST", body: JSON.stringify(payload) });
-    const header = "| 排名 | 股票 | 日期 | 因子值 |\n|---:|---|---|---:|\n";
-    const rows = result.ranking.map(item => `| ${item.rank} | ${item.symbol} | ${item.date} | ${item.value} |`).join("\n");
-    node.innerHTML = `<div class="markdown-body">${renderMarkdown(`### ${result.factor} 因子排名\n${header}${rows}`)}</div>`;
+    const header = "| 排名 | 股票 | 日期 | 原始值 | 排序分数 | 方向 |\n|---:|---|---|---:|---:|---|\n";
+    const rows = result.ranking.map(item => `| ${item.rank} | ${item.symbol} | ${item.date} | ${item.raw_value} | ${item.score} | ${item.direction} |`).join("\n");
+    node.innerHTML = `<div class="markdown-body">${renderMarkdown(`### ${result.factor} 因子排名\n截至 ${result.as_of_date} · 有效 ${result.effective_symbol_count}/${result.requested_symbol_count}（覆盖率 ${pct(result.coverage_ratio)}）\n${header}${rows}`)}</div>`;
   } catch (error) { node.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`; }
 }
 
@@ -198,9 +225,30 @@ async function runBacktest() {
   $("#backtest-detail").textContent = "计算中...";
   try {
     const result = await api("/api/backtests", { method: "POST", body: JSON.stringify(payload) });
-    updateMetrics(result.metrics); drawEquity(result.series); drawDrawdown(result.series);
-    $("#backtest-detail").textContent = JSON.stringify({ id: result.id, strategy: result.strategy, parameters: result.parameters, metrics: result.metrics, methodology: result.methodology }, null, 2);
+    renderBacktest(result);
+    await loadBacktestHistory();
   } catch (error) { $("#backtest-detail").textContent = error.message; }
+}
+
+function renderBacktest(result) {
+  currentSeries = result.series || [];
+  updateMetrics(result.metrics); drawEquity(currentSeries); drawDrawdown(currentSeries);
+  const latest = currentSeries.at(-1) || { weights: {}, turnover: 0 };
+  const holdings = Object.entries(latest.weights || {}).map(([symbol, weight]) => `${symbol} ${pct(weight)}`).join("、") || "空仓";
+  const p = result.provenance || {};
+  $("#backtest-detail").innerHTML = `<strong>回测 #${result.id} · ${escapeHtml(p.dataset_name || "未知数据集")}</strong>
+    <div>${escapeHtml(`${p.start_date || "-"} 至 ${p.end_date || "-"} · 首次持仓 ${result.methodology?.first_holding_date || "-"} · 有效 ${result.methodology?.effective_trading_days || currentSeries.length} 日`)}</div>
+    <div>当前持仓：${escapeHtml(holdings)}；最近换手：${pct(latest.turnover || 0)}</div>
+    <div>口径：${escapeHtml(result.methodology?.weighting || "")}；${escapeHtml(result.methodology?.cost_model || "")}</div>`;
+}
+
+async function loadBacktestHistory() {
+  const history = await api("/api/backtests?limit=5");
+  $("#backtest-history").innerHTML = history.map(item => `<button class="history-item" data-backtest-id="${item.id}">#${item.id} · ${escapeHtml(item.strategy)} · ${pct(item.metrics.total_return)} · ${escapeHtml(item.created_at)}</button>`).join("");
+  document.querySelectorAll("[data-backtest-id]").forEach(button => button.addEventListener("click", () => guarded(button, async () => {
+    renderBacktest(await api(`/api/backtests/${button.dataset.backtestId}`));
+  })));
+  return history;
 }
 
 async function runAgent() {
@@ -214,16 +262,27 @@ async function runAgent() {
   } catch (error) { node.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`; }
 }
 
-$("#import-dataset").addEventListener("click", importDataset);
-$("#run-factor").addEventListener("click", runFactor);
-$("#run-backtest").addEventListener("click", runBacktest);
-$("#run-agent").addEventListener("click", runAgent);
-document.querySelectorAll("[data-query]").forEach(button => button.addEventListener("click", () => { $("#agent-query").value = button.dataset.query; runAgent(); }));
+$("#import-dataset").addEventListener("click", event => guarded(event.currentTarget, importDataset));
+$("#run-factor").addEventListener("click", event => guarded(event.currentTarget, runFactor));
+$("#run-backtest").addEventListener("click", event => guarded(event.currentTarget, runBacktest));
+$("#run-agent").addEventListener("click", event => guarded(event.currentTarget, runAgent));
+document.querySelectorAll("[data-query]").forEach(button => button.addEventListener("click", () => { $("#agent-query").value = button.dataset.query; guarded($("#run-agent"), runAgent); }));
+$("#price-quick").addEventListener("click", event => {
+  $("#agent-query").value = event.currentTarget.dataset.query;
+  guarded($("#run-agent"), runAgent);
+});
+
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { drawEquity(currentSeries); drawDrawdown(currentSeries); }, 120);
+});
 
 (async () => {
   try {
     await refreshHealth();
     await loadDatasets();
-    await runBacktest();
+    const history = await loadBacktestHistory();
+    if (history.length) renderBacktest(await api(`/api/backtests/${history[0].id}`));
   } catch (error) { $("#health").textContent = `连接失败：${error.message}`; }
 })();
